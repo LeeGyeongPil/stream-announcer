@@ -1,0 +1,15 @@
+{
+  "lang": "en",
+  "description": "Prose, a decimal number, a code fence split across chunks, inline Markdown",
+  "chunks": [
+    "Sure! Pi is ab",
+    "out 3.",
+    "14 for most uses. ",
+    "Here is ",
+    "code:\n``",
+    "`python\nimport math\n",
+    "print(math.pi)\n``",
+    "`\nThat **prints** it",
+    ". Done"
+  ]
+}

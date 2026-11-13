@@ -1,0 +1,10 @@
+{
+  "lang": "en",
+  "description": "A Markdown table split across chunks",
+  "chunks": [
+    "Here are the results:\n\n| Name | Sc",
+    "ore | Rank |\n|---|---|---|\n",
+    "| Ann | 9 | 1 |\n| Bob | 7 | 2 |\n",
+    "\nThat is all."
+  ]
+}

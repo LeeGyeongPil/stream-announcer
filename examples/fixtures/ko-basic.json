@@ -1,0 +1,5 @@
+{
+  "lang": "ko",
+  "description": "Korean prose with a decimal number and a question",
+  "chunks": ["네, 알겠습니", "다. 파이는 약 3.", "14입니다. 다음 ", "단계는 무엇", "인가요? 끝"]
+}

@@ -51,12 +51,18 @@ export class MarkdownGuard {
   private passthrough = false;
   private fence: { marker: string; lang: string; lines: number } | null = null;
   private table: string[] = [];
+  /** A trailing "\r" is held back until the next chunk shows whether it starts a "\r\n". */
+  private heldCr = false;
 
   constructor(private readonly options: { messages: Pick<AnnouncerMessages, 'codeBlock' | 'table'> }) {}
 
   push(text: string): GuardOutput[] {
     const out: GuardOutput[] = [];
-    let rest = text;
+    // Treat "\r\n" as "\n", even when the "\r" and "\n" arrive in different chunks.
+    let rest = (this.heldCr ? '\r' : '') + text;
+    this.heldCr = rest.endsWith('\r');
+    if (this.heldCr) rest = rest.slice(0, -1);
+    rest = rest.replace(/\r\n/g, '\n');
     while (rest.length > 0) {
       const nl = rest.indexOf('\n');
       if (nl === -1) {
@@ -73,6 +79,7 @@ export class MarkdownGuard {
   /** The stream ended: close open fences and tables. */
   flush(): GuardOutput[] {
     const out: GuardOutput[] = [];
+    this.heldCr = false;
     if (this.fence) {
       if (this.line.trim().length > 0) this.fence.lines += 1;
       this.line = '';

@@ -84,3 +84,34 @@ describe('stripInlineMarkdown', () => {
     expect(stripInlineMarkdown('an *italic* and _under_ word')).toBe('an italic and under word');
   });
 });
+
+describe('MarkdownGuard with CRLF line endings', () => {
+  const crlf = 'Hi.\r\n```js\r\nx\r\n```\r\nBye.';
+  const summaries = (chunks: string[]) => guardOutputs('en', chunks).filter((o) => o.kind === 'summary').map((o) => o.text);
+
+  it('summarizes a fence the same as with LF', () => {
+    expect(summaries([crlf])).toEqual(['js code block, 1 line.']);
+    expect(summaries([crlf.replace(/\r\n/g, '\n')])).toEqual(['js code block, 1 line.']);
+  });
+
+  it('works when CR and LF arrive in different chunks', () => {
+    expect(summaries(crlf.split(/(?<=\r)/))).toEqual(['js code block, 1 line.']);
+    expect(summaries([...crlf].map((c) => c))).toEqual(['js code block, 1 line.']);
+  });
+
+  it('summarizes a table with CRLF', () => {
+    expect(summaries(['| a | b |\r\n|---|---|\r\n| 1 | 2 |\r\n'])).toEqual(['Table, 2 columns, 1 row.']);
+  });
+
+  it('announces Hi., summary, Bye. through the announcer', async () => {
+    const sink = memorySink();
+    await replay(createStreamAnnouncer({ mode: 'sentence', sink }), [crlf]);
+    expect(sink.history).toEqual([
+      'Generating response.',
+      'Hi.',
+      'js code block, 1 line.',
+      'Bye.',
+      'Response complete.',
+    ]);
+  });
+});

@@ -373,9 +373,9 @@ npm test
 npm run build
 ```
 
-`npm test` runs 130 tests in 9 files (about 2.5 seconds on the author's machine) with jsdom and recorded chunks; no browser, key or network is needed.
+`npm test` runs 135 tests in 9 files (about 2.5 seconds on the author's machine) with jsdom and recorded chunks; no browser, key or network is needed.
 
-![npm test output: 9 test files, 108 tests passed](docs/images/tests.png)
+![npm test output: 9 test files, 135 tests passed](docs/images/tests.png)
 
 *The test suite asserts the announcement order for each behavior described above.*
 

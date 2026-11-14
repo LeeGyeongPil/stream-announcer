@@ -137,8 +137,8 @@ All of `stream-announcer`:
 | `announcer.destroy()` | Clears timers and removes its own region (a shared `region` stays; only its own waiting texts are dropped); later calls other than `destroy` throw | none | `void` |
 | `announcer.status` | `idle`, `generating`, `done`, `aborted`, `error` | none | `AnnouncerStatus` |
 | `createLiveRegion(options?)` | Creates the single visually hidden `role="status"` region | `document`, `politeness` (`polite`), `repeatDelayMs` (100), `spacingMs` (150) | `LiveRegion` (`element`, `announce`, `clear(owner?)`, `destroy`) |
-| `SentenceBuffer` | The sentence splitter on its own | `locale`, `minChars`, `maxChars`, `idleFlushMs`, `onIdle` | class |
-| `MarkdownGuard` | The code-fence and table detector on its own | `messages` | class |
+| `SentenceBuffer` | The sentence splitter on its own. `nextLineStarted()` returns the sentences a line break completes while the caller holds the new line back | `locale`, `minChars`, `maxChars`, `idleFlushMs`, `onIdle` | class |
+| `MarkdownGuard` | The code-fence and table detector on its own. `holdsPossibleTable` is true while text waits for a possible `\|` (table without leading pipes); `releasePending()` lets that text go when the stream goes quiet | `messages`, `maxChars` (200) | class |
 | `stripInlineMarkdown(text)` | Removes `**`, `` ` ``, links and similar marks | `text: string` | `string` |
 | `messages`, `pickLanguage(locale)`, `resolveMessages(locale, overrides)` | Built-in texts and language choice | `locale`, `overrides` | texts / `'en' \| 'ko'` |
 
@@ -352,6 +352,7 @@ What to listen for:
 - **React StrictMode in development.** `useStreamAnnouncer` creates and destroys the announcer in pairs, so StrictMode's double mount leaves exactly one region. But if `useAnnounceText` is first rendered already with the status `submitted`, the development-only double mount sends the start text to a custom `sink` twice (still one region). Normally the status starts as `idle` or `ready`, which is not affected. Production builds do not double mount.
 - **Sentence detection is heuristic.** `Intl.Segmenter` can cut after an abbreviation (`Dr. Smith`) or a list number (`1. First`). Short pieces (`minChars`) are merged, and text without punctuation is released by `idleFlushMs` and `maxChars`.
 - **Indented code blocks are not detected**; only fenced blocks (```` ``` ```` or `~~~`) are summarized.
+- **Tables without a leading pipe are detected with a delay.** Because `a | b` followed by `--- | ---` is a valid table, a line that contains `|` (a shell pipe in inline code, for example) is held until its line ends, so a normal line like that is spoken one line late. If the stream pauses for `idleFlushMs` or longer between the header and the separator line, the header is spoken as plain text. A header whose first sentence continues before the first `|` (`Dr. Kim | Age`) is not treated as a table.
 - **`aria-busy` is only a hint.** Screen readers do not agree on what it means.
 - Options of `useStreamAnnouncer` are read once at mount.
 
@@ -372,7 +373,7 @@ npm test
 npm run build
 ```
 
-`npm test` runs 108 tests in 9 files (about 2.5 seconds on the author's machine) with jsdom and recorded chunks; no browser, key or network is needed.
+`npm test` runs 130 tests in 9 files (about 2.5 seconds on the author's machine) with jsdom and recorded chunks; no browser, key or network is needed.
 
 ![npm test output: 9 test files, 108 tests passed](docs/images/tests.png)
 

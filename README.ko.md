@@ -137,8 +137,8 @@ flowchart LR
 | `announcer.destroy()` | 타이머를 정리하고 자기가 만든 영역을 제거한다(공유 `region` 은 남기고 자기 대기 문구만 버린다). 이후 `destroy` 외 호출은 예외 | 없음 | `void` |
 | `announcer.status` | `idle`, `generating`, `done`, `aborted`, `error` | 없음 | `AnnouncerStatus` |
 | `createLiveRegion(options?)` | 화면에서 숨긴 `role="status"` 영역 하나를 만든다 | `document`, `politeness`(`polite`), `repeatDelayMs`(100), `spacingMs`(150) | `LiveRegion`(`element`, `announce`, `clear(owner?)`, `destroy`) |
-| `SentenceBuffer` | 문장 분리기만 따로 쓴다 | `locale`, `minChars`, `maxChars`, `idleFlushMs`, `onIdle` | 클래스 |
-| `MarkdownGuard` | 코드 펜스·표 감지기만 따로 쓴다 | `messages` | 클래스 |
+| `SentenceBuffer` | 문장 분리기만 따로 쓴다. `nextLineStarted()` 는 호출 쪽이 새 줄을 보류하는 동안 줄바꿈으로 완성된 문장을 돌려준다 | `locale`, `minChars`, `maxChars`, `idleFlushMs`, `onIdle` | 클래스 |
+| `MarkdownGuard` | 코드 펜스·표 감지기만 따로 쓴다. `holdsPossibleTable` 은 `\|` 가 나올지 몰라 텍스트를 보류하는 동안(앞 파이프 없는 표) true 이고, `releasePending()` 은 스트림이 조용해지면 그 텍스트를 내보낸다 | `messages`, `maxChars`(200) | 클래스 |
 | `stripInlineMarkdown(text)` | `**`, `` ` ``, 링크 같은 기호를 없앤다 | `text: string` | `string` |
 | `messages`, `pickLanguage(locale)`, `resolveMessages(locale, overrides)` | 내장 문구와 언어 선택 | `locale`, `overrides` | 문구 / `'en' \| 'ko'` |
 
@@ -350,6 +350,7 @@ npm run demo
 - **개발 모드의 React StrictMode.** `useStreamAnnouncer` 는 announcer 를 생성·파기하는 쌍으로 다루므로 StrictMode 의 이중 마운트 뒤에도 영역은 정확히 하나입니다. 다만 `useAnnounceText` 를 처음부터 `submitted` 상태로 렌더하면, 개발 모드에서만 일어나는 이중 마운트 때문에 직접 만든 `sink` 로 시작 문구가 두 번 갑니다(영역은 여전히 하나). 보통 상태는 `idle` 이나 `ready` 로 시작하므로 영향이 없고, 프로덕션 빌드는 이중 마운트하지 않습니다.
 - **문장 감지는 휴리스틱입니다.** `Intl.Segmenter` 는 약어(`Dr. Smith`)나 목록 번호(`1. First`) 뒤에서 끊을 수 있습니다. 짧은 조각은 합치고(`minChars`), 문장부호 없는 텍스트는 `idleFlushMs` 와 `maxChars` 로 내보냅니다.
 - **들여쓰기 코드 블록은 감지하지 않습니다.** 펜스(```` ``` ```` 또는 `~~~`) 블록만 요약합니다.
+- **앞 파이프 없는 표는 감지에 시간이 걸립니다.** `a | b` 다음에 `--- | ---` 가 오면 유효한 표이므로, `|` 가 든 줄(예: 인라인 코드 속 셸 파이프)은 줄이 끝날 때까지 보류됩니다. 그래서 그런 일반 줄은 한 줄 늦게 읽힙니다. 헤더와 구분선 사이에서 스트림이 `idleFlushMs` 이상 멈추면 헤더는 일반 텍스트로 읽힙니다. 첫 `|` 앞에서 문장이 이어지는 헤더(`Dr. Kim | Age`)는 표로 보지 않습니다.
 - **`aria-busy` 는 힌트일 뿐입니다.** 낭독기마다 의미를 다르게 해석합니다.
 - `useStreamAnnouncer` 의 옵션은 마운트 때 한 번만 읽습니다.
 
@@ -370,7 +371,7 @@ npm test
 npm run build
 ```
 
-`npm test` 는 jsdom 과 녹화된 청크로 9개 파일의 테스트 108개를 실행합니다(작성자 환경에서 약 2.5초). 브라우저·키·네트워크가 필요 없습니다.
+`npm test` 는 jsdom 과 녹화된 청크로 9개 파일의 테스트 130개를 실행합니다(작성자 환경에서 약 2.5초). 브라우저·키·네트워크가 필요 없습니다.
 
 ![npm test 출력: 테스트 파일 9개, 테스트 108개 통과](docs/images/tests.png)
 

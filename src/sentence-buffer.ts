@@ -73,13 +73,25 @@ export class SentenceBuffer {
     this.timer = null;
   }
 
-  private drain(final: boolean): string[] {
+  /**
+   * More text has started on the next line, but the caller holds it back for now (`MarkdownGuard`
+   * waits for a possible "|"). Returns the sentences that the line break completes, the same as
+   * pushing the first character of that line would. The idle timer stops: the caller flushes when
+   * the stream goes quiet.
+   */
+  nextLineStarted(): string[] {
+    this.cancel();
+    // Nothing can extend a segment that ends with a line break.
+    return this.drain(false, /\n\s*$/.test(this.text));
+  }
+
+  private drain(final: boolean, lastIsComplete = false): string[] {
     const segments = [...this.segmenter.segment(this.text)].map((s) => s.segment);
     const out: string[] = [];
     let held = '';
     for (let i = 0; i < segments.length; i++) {
       held += segments[i];
-      if (!final && i === segments.length - 1) break;
+      if (!final && !lastIsComplete && i === segments.length - 1) break;
       // While a fragment is held, later segments join it so sentences never overtake it.
       if (TERMINATED.test(held) && held.trim().length >= this.minChars) {
         out.push(clean(held));

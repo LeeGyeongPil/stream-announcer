@@ -64,11 +64,35 @@ export function createStreamAnnouncer(options: StreamAnnouncerOptions = {}): Str
 
   let status: AnnouncerStatus = 'idle';
   let destroyed = false;
-  let guard = new MarkdownGuard({ messages });
+  let guard = newGuard();
   let buffer = newBuffer();
   let body: string[] = [];
   let heartbeat: ReturnType<typeof setTimeout> | null = null;
   let inReasoning = false;
+  // While the guard holds a line that may still become a table, this timer replaces the buffer's
+  // idle timer: when the stream goes quiet, the held line is released and read (sentence mode).
+  let guardIdle: ReturnType<typeof setTimeout> | null = null;
+
+  function stopGuardIdle(): void {
+    if (guardIdle !== null) clearTimeout(guardIdle);
+    guardIdle = null;
+  }
+
+  function armGuardIdle(): void {
+    stopGuardIdle();
+    const ms = options.idleFlushMs ?? 1500;
+    if (mode !== 'sentence' || ms <= 0) return;
+    guardIdle = setTimeout(() => {
+      guardIdle = null;
+      if (status !== 'generating') return;
+      handle(guard.releasePending());
+      buffer.flush().forEach(addSentence);
+    }, ms);
+  }
+
+  function newGuard(): MarkdownGuard {
+    return new MarkdownGuard({ messages, ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}) });
+  }
 
   function newBuffer(): SentenceBuffer {
     return new SentenceBuffer({
@@ -131,10 +155,11 @@ export function createStreamAnnouncer(options: StreamAnnouncerOptions = {}): Str
 
   function reset(): void {
     stopHeartbeat();
+    stopGuardIdle();
     buffer.cancel();
     // The previous response (finished or not) must not be read after the new one starts.
     dropWaiting();
-    guard = new MarkdownGuard({ messages });
+    guard = newGuard();
     buffer = newBuffer();
     body = [];
     inReasoning = false;
@@ -143,6 +168,7 @@ export function createStreamAnnouncer(options: StreamAnnouncerOptions = {}): Str
   function finish(next: AnnouncerStatus, text: string, kind: AnnounceKind): void {
     status = next;
     stopHeartbeat();
+    stopGuardIdle();
     buffer.cancel();
     setBusy(false);
     // done() lets queued sentences finish before the completion; abort()/error() drop them,
@@ -176,6 +202,14 @@ export function createStreamAnnouncer(options: StreamAnnouncerOptions = {}): Str
       if (status !== 'generating') return;
       inReasoning = false;
       handle(guard.push(delta));
+      if (guard.holdsPossibleTable) {
+        // The held line would have reached the buffer without the table check: the line before it
+        // is complete now, and the guard's idle timer takes over until the line is released.
+        buffer.nextLineStarted().forEach(addSentence);
+        armGuardIdle();
+      } else {
+        stopGuardIdle();
+      }
     },
 
     event(event: StreamEvent) {
@@ -217,6 +251,7 @@ export function createStreamAnnouncer(options: StreamAnnouncerOptions = {}): Str
     destroy() {
       if (destroyed) return;
       stopHeartbeat();
+      stopGuardIdle();
       buffer.cancel();
       setBusy(false);
       if (ownRegion) ownRegion.destroy();

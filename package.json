@@ -1,6 +1,6 @@
 {
   "name": "stream-announcer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Screen reader announcements for streaming LLM chat: sentence-level, completion-aware, framework-neutral core with React hooks and jsdom test helpers.",
   "keywords": ["accessibility", "a11y", "aria-live", "screen-reader", "streaming", "llm", "chat", "react"],
   "license": "MIT",

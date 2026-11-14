@@ -256,3 +256,25 @@ describe('MarkdownGuard with tables that have no leading pipe', () => {
     expect(joinProse(['a | b\n|'])).toBe('a | b\n|\n');
   });
 });
+
+describe('MarkdownGuard closing fence at end of stream', () => {
+  const summary = (chunks: string[]) =>
+    guardOutputs('en', chunks).filter((o) => o.kind === 'summary').map((o) => o.text);
+
+  it('does not count a closing fence without trailing newline', () => {
+    expect(summary(['x:\n```py\nprint(1)\n```'])).toEqual(['py code block, 1 line.']);
+  });
+  it('keeps 1 line when a trailing newline exists', () => {
+    expect(summary(['x:\n```py\nprint(1)\n```\n'])).toEqual(['py code block, 1 line.']);
+  });
+  it('still counts the last code line of an unclosed fence', () => {
+    expect(summary(['x:\n```py\nprint(1)\nprint(2)'])).toEqual(['py code block, 2 lines.']);
+  });
+  it('handles a closing fence split across chunks', () => {
+    expect(summary(['x:\n```py\nprint(1)\n``', '`'])).toEqual(['py code block, 1 line.']);
+  });
+  it('does not treat shorter or different markers as closing', () => {
+    expect(summary(['x:\n````py\nprint(1)\n```'])).toEqual(['py code block, 2 lines.']);
+    expect(summary(['x:\n~~~py\nprint(1)\n```'])).toEqual(['py code block, 2 lines.']);
+  });
+});

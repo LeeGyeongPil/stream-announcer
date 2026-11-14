@@ -141,7 +141,8 @@ export class MarkdownGuard {
     const out: GuardOutput[] = [];
     this.heldCr = false;
     if (this.fence) {
-      if (this.line.trim().length > 0) this.fence.lines += 1;
+      // A closing fence without a final newline is not a code line.
+      if (this.line.trim().length > 0 && !isClosingFence(this.line, this.fence.marker)) this.fence.lines += 1;
       this.line = '';
       this.closeFence(out);
       return out;

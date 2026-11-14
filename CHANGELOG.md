@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-14
+
+### Fixed
+
+- `MarkdownGuard` no longer counts a closing code fence without a trailing newline as a code line (a 1-line block was summarized as "2 lines").
+
 ## [0.1.2] - 2026-11-14
 
 ### Added

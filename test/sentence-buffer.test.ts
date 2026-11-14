@@ -57,6 +57,26 @@ describe('SentenceBuffer', () => {
     expect(idle).toEqual([['안녕하세요 반갑습니다 오늘은 날씨가 좋네요']]);
   });
 
+  it('nextLineStarted releases a line that ended, like the first character of the next line would', () => {
+    const idle: string[][] = [];
+    const buffer = new SentenceBuffer({ onIdle: (s) => idle.push(s) });
+    expect(buffer.push('- item one\n')).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(buffer.nextLineStarted()).toEqual(['- item one']);
+    // The idle timer stops: the caller that holds the next line flushes when the stream goes quiet.
+    expect(vi.getTimerCount()).toBe(0);
+    // A short line is still merged with the next one, and text without a line break may still grow.
+    const short = new SentenceBuffer();
+    short.push('Hi\n');
+    expect(short.nextLineStarted()).toEqual([]);
+    expect(run(short, ['There you go.'])).toEqual(['Hi There you go.']);
+    const open = new SentenceBuffer();
+    open.push('Pi is 3.');
+    expect(open.nextLineStarted()).toEqual([]);
+    expect(open.pending).toBe('Pi is 3.');
+    expect(idle).toEqual([]);
+  });
+
   it('restarts the idle timer on every push and stops it on cancel', () => {
     const idle: string[][] = [];
     const buffer = new SentenceBuffer({ onIdle: (s) => idle.push(s) });

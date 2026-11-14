@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLiveRegion, createStreamAnnouncer } from '../src/index.js';
-import { memorySink, recordLiveRegion, replay } from '../src/testing/index.js';
+import { memorySink, recordLiveRegion, replay, type MemorySink } from '../src/testing/index.js';
 import { EN_CHUNKS, EN_SENTENCE_HISTORY, burst } from './fixtures.js';
 
 describe('createStreamAnnouncer', () => {
@@ -140,6 +140,104 @@ describe('createStreamAnnouncer', () => {
     expect(sink.history).toEqual(['응답을 생성하는 중입니다.']);
     vi.advanceTimersByTime(1);
     expect(sink.history.at(-1)).toBe('안녕하세요 반갑습니다');
+  });
+
+  it('sentence mode reads a held line without punctuation after the idle time, and cleans the timer up', () => {
+    const sink = memorySink();
+    const a = createStreamAnnouncer({ mode: 'sentence', sink, heartbeatMs: 0 });
+    a.start();
+    a.push('Name');
+    expect(sink.history).toEqual(['Generating response.']);
+    vi.advanceTimersByTime(1500);
+    expect(sink.history.at(-1)).toBe('Name');
+    a.push(' and more');
+    a.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('sentence mode recognizes a table whose header is split before the first pipe', async () => {
+    const sink = memorySink();
+    const chunks = ['T:\n', 'Name', ' |', ' Age', '\n', '---', ' | ---\n', 'Kim', ' | 3', '0\n', 'End.'];
+    await replay(createStreamAnnouncer({ mode: 'sentence', sink }), chunks);
+    expect(sink.history).toEqual(['Generating response.', 'T:', 'Table, 2 columns, 1 row.', 'End.', 'Response complete.']);
+  });
+
+  describe('sentence mode while a line may still become a table without leading pipes', () => {
+    // Each text with its time in ms after start(), so idle timing is checked exactly.
+    const timeline = (sink: MemorySink) => sink.entries.map((e) => `${e.at - (sink.entries[0]?.at ?? 0)}:${e.text}`);
+    const announcer = (sink: MemorySink) => createStreamAnnouncer({ mode: 'sentence', sink, heartbeatMs: 0, idleFlushMs: 300 });
+
+    it('reads a "|" table at once and the line after it after idleFlushMs, as before', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('| a | b |\n|---|---|\n| 1 | 2 |\nEnd');
+      vi.advanceTimersByTime(800);
+      a.done();
+      expect(timeline(sink)).toEqual(['0:Generating response.', '0:Table, 2 columns, 1 row.', '300:End', '800:Response complete.']);
+    });
+
+    it('reads a sentence with "|" after idleFlushMs when the stream stops before a separator row', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('Use a | b here.\n');
+      vi.advanceTimersByTime(800);
+      a.done();
+      expect(timeline(sink)).toEqual(['0:Generating response.', '300:Use a | b here.', '800:Response complete.']);
+    });
+
+    it('reads a table without leading pipes and the line after it after idleFlushMs', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('a | b\n--- | ---\n1 | 2\nLet me check');
+      vi.advanceTimersByTime(800);
+      a.done();
+      expect(timeline(sink)).toEqual([
+        '0:Generating response.',
+        '300:Table, 2 columns, 1 row.',
+        '300:Let me check',
+        '800:Response complete.',
+      ]);
+    });
+
+    it('reads a finished line as soon as the next line starts, even while that line is held', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('- item one\n');
+      expect(sink.history).toEqual(['Generating response.']);
+      a.push('- item');
+      expect(sink.history).toEqual(['Generating response.', 'item one']);
+      a.destroy();
+    });
+
+    it('never reads code when the stream pauses inside an opening fence', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('Look:\n``');
+      vi.advanceTimersByTime(1500);
+      a.push('`js\nconst a = 1;\n```\nDone.');
+      a.done();
+      expect(sink.history).toEqual(['Generating response.', 'Look:', 'js code block, 1 line.', 'Done.', 'Response complete.']);
+    });
+
+    it('stops the idle timer on abort and destroy while a line is held', () => {
+      const sink = memorySink();
+      const a = announcer(sink);
+      a.start();
+      a.push('a | b\n--- | ---\n1 | 2\nLet me check');
+      a.abort();
+      vi.advanceTimersByTime(5000);
+      expect(sink.history).toEqual(['Generating response.', 'Response stopped.']);
+      const b = announcer(memorySink());
+      b.start();
+      b.push('Use a | b here.\n');
+      b.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it('validates options with fix-it messages', () => {

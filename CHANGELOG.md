@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-25
+
+### Fixed
+
+- `MarkdownGuard` now recognizes a code fence indented under a list item (for example 4 spaces under `1. ` or 6 under a nested `- `), so the language name and code are no longer read aloud. Fences indented 4+ spaces outside a list are still not detected.
+
 ## [0.1.3] - 2026-11-14
 
 ### Fixed

@@ -278,3 +278,36 @@ describe('MarkdownGuard closing fence at end of stream', () => {
     expect(summary(['x:\n~~~py\nprint(1)\n```'])).toEqual(['py code block, 2 lines.']);
   });
 });
+
+describe('MarkdownGuard fences inside list items', () => {
+  const outputs = (chunks: string[]) => guardOutputs('en', chunks);
+  const summary = (chunks: string[]) => outputs(chunks).filter((o) => o.kind === 'summary').map((o) => o.text);
+  const prose = (chunks: string[]) => outputs(chunks).filter((o) => o.kind === 'prose').map((o) => o.text).join('');
+  const numbered = 'Steps:\n1. Install:\n    ```bash\n    npm install stream-announcer\n    ```\n2. Done.\n';
+  const nested = '- a\n  - b\n      ```js\n      x\n      ```\n';
+
+  it('summarizes a fence indented under a numbered item', () => {
+    expect(summary([numbered])).toEqual(['bash code block, 1 line.']);
+    expect(prose([numbered])).not.toMatch(/bash|npm install/);
+    expect(prose([numbered])).toContain('2. Done.');
+  });
+  it('summarizes a fence indented under a nested list', () => {
+    expect(summary([nested])).toEqual(['js code block, 1 line.']);
+    expect(prose([nested])).not.toMatch(/js|x\n/);
+  });
+  it('gives the same result when chunks split inside the fence lines', () => {
+    for (const text of [numbered, nested]) {
+      const expected = summary([text]);
+      for (let i = 1; i < text.length; i++) {
+        expect(summary([text.slice(0, i), text.slice(i)])).toEqual(expected);
+      }
+      expect(summary(text.split(''))).toEqual(expected);
+    }
+  });
+  it('still ignores a fence indented 4+ spaces outside a list', () => {
+    expect(summary(['Text.\n\n    ```bash\n    x\n    ```\n'])).toEqual([]);
+  });
+  it('ends the list context at an unindented plain line', () => {
+    expect(summary(['- a\n\nPlain.\n\n    ```bash\n    x\n    ```\n'])).toEqual([]);
+  });
+});

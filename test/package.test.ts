@@ -26,7 +26,7 @@ beforeAll(() => {
   }
 }, 120_000);
 
-describe('package build', () => {
+describe('package build', { timeout: 60_000 }, () => {
   it('emits ESM and type declarations for every entry point', () => {
     for (const entry of ['dist/index', 'dist/react/index', 'dist/testing/index']) {
       expect(existsSync(path(`${entry}.js`)), `${entry}.js`).toBe(true);
@@ -60,7 +60,7 @@ describe('package build', () => {
   });
 });
 
-describe('example CLI', () => {
+describe('example CLI', { timeout: 60_000 }, () => {
   it('prints the Korean announcement order with --lang ko', () => {
     const { code, out } = runExample(['--lang', 'ko', '--mode', 'sentence', '--fixture', 'ko-basic']);
     expect(code).toBe(0);

@@ -18,7 +18,27 @@ export function stripInlineMarkdown(text: string): string {
     .trim();
 }
 
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s]*)(.*)$/;
+const FENCE_LINE = /^( *)(`{3,}|~{3,})[ \t]*([^\s]*)(.*)$/;
+const LIST_MARKER = /^( *)(?:[-*+]|\d{1,9}[.)])( +|$)/;
+
+/**
+ * Whether `indent` spaces may precede a fence: 0-3 anywhere, or 0-3 beyond the content column of
+ * the current list item (`listCol`, null outside a list).
+ */
+function fenceIndentOk(indent: number, listCol: number | null): boolean {
+  return indent <= 3 || (listCol !== null && indent >= listCol && indent <= listCol + 3);
+}
+
+/** Content column of a list item line ("1. x" -> 3, "  - x" -> 4), or null when the line is not one. */
+function listContentColumn(line: string): number | null {
+  const m = LIST_MARKER.exec(line);
+  if (!m) return null;
+  const marker = line.slice(m[1]?.length ?? 0).match(/^(?:[-*+]|\d{1,9}[.)])/)?.[0] ?? '';
+  const gap = (m[2] ?? '').length;
+  // A marker followed by 5 or more spaces (or nothing) has its content one space after it.
+  const pad = gap === 0 || gap > 4 ? 1 : gap;
+  return (m[1]?.length ?? 0) + marker.length + pad;
+}
 const TABLE_ROW = /^ {0,3}\|/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 /** Text that can still grow into a separator row ("--- | :-"). */
@@ -33,28 +53,37 @@ const NEXT_SENTENCE = /(?:[.!?…]["'”’)\]」』]*\s+|[。！？]["'”’)\
  * Line starts that always wait for the end of their line, as they did before tables without
  * leading pipes were supported: blanks, (possible) fences and rows that start with "|".
  */
-function waitsForLineEnd(line: string): boolean {
+function waitsForLineEnd(line: string, listCol: number | null = null): boolean {
+  const lead = /^ */.exec(line)?.[0].length ?? 0;
+  const rest = line.slice(lead);
+  const fenceOk = fenceIndentOk(lead, listCol);
   return (
     /^ {0,3}$/.test(line) ||
+    (fenceOk && (rest === '' || /^(`{1,2}|~{1,2})$/.test(rest) || /^(`{3,}|~{3,})/.test(rest))) ||
     /^ {0,3}(`{1,2}|~{1,2})$/.test(line) ||
     /^ {0,3}(`{3,}|~{3,})/.test(line) ||
     TABLE_ROW.test(line)
   );
 }
 
-function matchOpenFence(line: string): { marker: string; lang: string } | null {
+function matchOpenFence(
+  line: string,
+  listCol: number | null,
+): { marker: string; lang: string; listCol: number | null } | null {
   const m = FENCE_LINE.exec(line);
-  const marker = m?.[1];
+  const marker = m?.[2];
   if (!m || !marker) return null;
+  if (!fenceIndentOk((m[1] ?? '').length, listCol)) return null;
   // CommonMark: the info string of a backtick fence cannot contain backticks.
-  if (marker.startsWith('`') && (m[2] ?? '').includes('`')) return null;
   if (marker.startsWith('`') && (m[3] ?? '').includes('`')) return null;
-  return { marker, lang: m[2] ?? '' };
+  if (marker.startsWith('`') && (m[4] ?? '').includes('`')) return null;
+  return { marker, lang: m[3] ?? '', listCol };
 }
 
-function isClosingFence(line: string, marker: string): boolean {
-  const m = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
-  const found = m?.[1];
+function isClosingFence(line: string, marker: string, listCol: number | null = null): boolean {
+  const m = /^( *)(`{3,}|~{3,})[ \t]*$/.exec(line);
+  if (!m || !fenceIndentOk((m[1] ?? '').length, listCol)) return false;
+  const found = m[2];
   return found !== undefined && found[0] === marker[0] && found.length >= marker.length;
 }
 
@@ -71,7 +100,11 @@ const countCells = (row: string): number => row.trim().replace(/^\|/, '').replac
 export class MarkdownGuard {
   private line = '';
   private passthrough = false;
-  private fence: { marker: string; lang: string; lines: number } | null = null;
+  private fence: { marker: string; lang: string; lines: number; listCol: number | null } | null = null;
+  /** Content column of the latest list item; fences indented from it count as fences. Null outside lists. */
+  private listCol: number | null = null;
+  /** The whole current line, kept even after its text was released as prose. */
+  private raw = '';
   private table: string[] = [];
   /** A complete line without a leading pipe that holds "|": a table header until the next line says otherwise. */
   private candidate: string | null = null;
@@ -92,7 +125,7 @@ export class MarkdownGuard {
   get holdsPossibleTable(): boolean {
     if (this.fence || this.passthrough) return false;
     if (this.candidate !== null || this.inTableWithoutPipes()) return true;
-    return this.line.length > 0 && !waitsForLineEnd(this.line);
+    return this.line.length > 0 && !waitsForLineEnd(this.line, this.listCol);
   }
 
   /**
@@ -106,7 +139,7 @@ export class MarkdownGuard {
     // A possible header is read as the line it probably is.
     this.releaseCandidate(out);
     const line = this.line;
-    if (line.trim().length === 0 || waitsForLineEnd(line)) return out;
+    if (line.trim().length === 0 || waitsForLineEnd(line, this.listCol)) return out;
     // A row of a table without leading pipes that already has its "|" waits like a "|" row.
     if (this.inTableWithoutPipes() && line.includes('|')) return out;
     this.closeTable(out);
@@ -140,9 +173,11 @@ export class MarkdownGuard {
   flush(): GuardOutput[] {
     const out: GuardOutput[] = [];
     this.heldCr = false;
+    this.raw = '';
+    this.listCol = null;
     if (this.fence) {
       // A closing fence without a final newline is not a code line.
-      if (this.line.trim().length > 0 && !isClosingFence(this.line, this.fence.marker)) this.fence.lines += 1;
+      if (this.line.trim().length > 0 && !isClosingFence(this.line, this.fence.marker, this.fence.listCol)) this.fence.lines += 1;
       this.line = '';
       this.closeFence(out);
       return out;
@@ -172,6 +207,7 @@ export class MarkdownGuard {
   }
 
   private partial(segment: string, out: GuardOutput[]): void {
+    if (!this.fence) this.raw += segment;
     if (this.fence) {
       this.line += segment;
       return;
@@ -185,7 +221,7 @@ export class MarkdownGuard {
     // A possible header is released as soon as this line can no longer be its separator row.
     if (this.candidate !== null && !SEPARATOR_START.test(line)) this.releaseCandidate(out);
     // Blanks, fences and "|" rows wait for the end of the line, exactly as before.
-    if (waitsForLineEnd(line)) return;
+    if (waitsForLineEnd(line, this.listCol)) return;
     // A table with leading pipes ends at the first line that is clearly not a "|" row.
     if (!this.inTableWithoutPipes()) this.closeTable(out);
     if (this.mayStillBeTableLine(line)) return;
@@ -214,24 +250,28 @@ export class MarkdownGuard {
 
   private endLine(out: GuardOutput[]): void {
     const line = this.line;
+    const raw = this.raw;
     this.line = '';
+    this.raw = '';
     if (this.passthrough) {
       this.passthrough = false;
+      this.trackList(raw);
       out.push({ kind: 'prose', text: '\n' });
       return;
     }
     if (this.fence) {
-      if (isClosingFence(line, this.fence.marker)) this.closeFence(out);
+      if (isClosingFence(line, this.fence.marker, this.fence.listCol)) this.closeFence(out);
       else this.fence.lines += 1;
       return;
     }
-    const open = matchOpenFence(line);
+    const open = matchOpenFence(line, this.listCol);
     if (open) {
       this.closeTable(out);
       this.releaseCandidate(out);
       this.fence = { ...open, lines: 0 };
       return;
     }
+    this.trackList(raw);
     if (this.candidate !== null) {
       if (this.isSeparator(line, this.candidate)) {
         this.table = [this.candidate, line];
@@ -251,6 +291,14 @@ export class MarkdownGuard {
       return;
     }
     out.push({ kind: 'prose', text: `${line}\n` });
+  }
+
+  /** Remember the content column of a list item; an unindented plain line ends the list. */
+  private trackList(line: string): void {
+    if (line.trim().length === 0) return;
+    const col = listContentColumn(line);
+    if (col !== null) this.listCol = col;
+    else if (!line.startsWith(' ')) this.listCol = null;
   }
 
   /** A confirmed table whose header has no leading pipe ("a | b"). Its rows may start with text. */

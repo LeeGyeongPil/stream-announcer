@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-26
+
+### Changed
+
+- Test runner uses in-process threads with at most 2 workers and a longer teardown timeout, so the suite starts reliably on loaded machines. No change to the published package.
+
 ## [0.1.4] - 2026-11-25
 
 ### Fixed

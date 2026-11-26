@@ -311,3 +311,58 @@ describe('MarkdownGuard fences inside list items', () => {
     expect(summary(['- a\n\nPlain.\n\n    ```bash\n    x\n    ```\n'])).toEqual([]);
   });
 });
+
+describe('MarkdownGuard in blockquotes', () => {
+  const CODE = 'Note:\n> ```bash\n> rm -rf build\n> npm run build\n> ```\nThen restart.\n';
+  const TABLE = '> | a | b |\n> |---|---|\n> | 1 | 2 |\nEnd.\n';
+
+  const spoken = async (mode: 'sentence' | 'on-complete', text: string, size = 0) => {
+    const sink = memorySink();
+    const chunks = size === 0 ? [text] : text.match(new RegExp(`[^]{1,${size}}`, 'g')) ?? [];
+    await replay(createStreamAnnouncer({ mode, sink, heartbeatMs: 0, idleFlushMs: 0 }), chunks);
+    return sink.history.filter((t) => mode === 'on-complete' || (t !== 'Generating response.' && t !== 'Response complete.'));
+  };
+
+  it('summarizes a quoted fence in sentence mode', async () => {
+    expect(await spoken('sentence', CODE)).toEqual(['Note:', 'bash code block, 2 lines.', 'Then restart.']);
+  });
+
+  it('summarizes a quoted table in sentence mode', async () => {
+    expect(await spoken('sentence', TABLE)).toEqual(['Table, 2 columns, 1 row.', 'End.']);
+  });
+
+  it('keeps raw quoted code and tables out of the on-complete text', async () => {
+    const all = (await spoken('on-complete', CODE + TABLE)).join(' ');
+    expect(all).toContain('bash code block, 2 lines.');
+    expect(all).toContain('Table, 2 columns, 1 row.');
+    expect(all).not.toContain('rm -rf');
+    expect(all).not.toContain('|---|');
+  });
+
+  it('gives the same result for every chunk size', async () => {
+    for (const size of [1, 2, 3, 5, 7]) {
+      expect(await spoken('sentence', CODE, size)).toEqual(['Note:', 'bash code block, 2 lines.', 'Then restart.']);
+      expect(await spoken('sentence', TABLE, size)).toEqual(['Table, 2 columns, 1 row.', 'End.']);
+    }
+  });
+
+  it('handles nested quotes', () => {
+    const out = guardOutputs('en', ['> > ```js\n> > a\n> > ```\n']);
+    expect(out.filter((o) => o.kind === 'summary').map((o) => o.text)).toEqual(['js code block, 1 line.']);
+  });
+
+  it('ends a quoted fence where the quote ends', () => {
+    const out = guardOutputs('en', ['> ```\n> a\nplain text\n']);
+    expect(out.filter((o) => o.kind === 'summary').map((o) => o.text)).toEqual(['Code block, 1 line.']);
+    expect(out.filter((o) => o.kind === 'prose').map((o) => o.text).join('')).toContain('plain text');
+  });
+
+  it('counts ">" lines inside an unquoted fence as code', () => {
+    const out = guardOutputs('en', ['```\n> a\n> b\n```\nafter\n']);
+    expect(out.filter((o) => o.kind === 'summary').map((o) => o.text)).toEqual(['Code block, 2 lines.']);
+  });
+
+  it('still speaks quoted prose sentence by sentence', async () => {
+    expect(await spoken('sentence', '> Hello there. Second one.\n')).toEqual(['Hello there.', 'Second one.']);
+  });
+});

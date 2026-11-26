@@ -39,6 +39,20 @@ function listContentColumn(line: string): number | null {
   const pad = gap === 0 || gap > 4 ? 1 : gap;
   return (m[1]?.length ?? 0) + marker.length + pad;
 }
+/** Quote markers at the start of a line: "> ", ">", "> > " (0-3 spaces before each one). */
+const QUOTE_PREFIX = /^ {0,3}> ?/;
+
+/** Removes every leading blockquote marker; `quoted` tells whether there was one. */
+function stripQuote(line: string): { text: string; quoted: boolean } {
+  let text = line;
+  let quoted = false;
+  for (let m = QUOTE_PREFIX.exec(text); m; m = QUOTE_PREFIX.exec(text)) {
+    text = text.slice(m[0].length);
+    quoted = true;
+  }
+  return { text, quoted };
+}
+
 const TABLE_ROW = /^ {0,3}\|/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 /** Text that can still grow into a separator row ("--- | :-"). */
@@ -100,7 +114,7 @@ const countCells = (row: string): number => row.trim().replace(/^\|/, '').replac
 export class MarkdownGuard {
   private line = '';
   private passthrough = false;
-  private fence: { marker: string; lang: string; lines: number; listCol: number | null } | null = null;
+  private fence: { marker: string; lang: string; lines: number; listCol: number | null; quoted: boolean } | null = null;
   /** Content column of the latest list item; fences indented from it count as fences. Null outside lists. */
   private listCol: number | null = null;
   /** The whole current line, kept even after its text was released as prose. */
@@ -125,7 +139,7 @@ export class MarkdownGuard {
   get holdsPossibleTable(): boolean {
     if (this.fence || this.passthrough) return false;
     if (this.candidate !== null || this.inTableWithoutPipes()) return true;
-    return this.line.length > 0 && !waitsForLineEnd(this.line, this.listCol);
+    return this.line.length > 0 && !waitsForLineEnd(stripQuote(this.line).text, this.listCol);
   }
 
   /**
@@ -139,9 +153,10 @@ export class MarkdownGuard {
     // A possible header is read as the line it probably is.
     this.releaseCandidate(out);
     const line = this.line;
-    if (line.trim().length === 0 || waitsForLineEnd(line, this.listCol)) return out;
+    const text = stripQuote(line).text;
+    if (text.trim().length === 0 || waitsForLineEnd(text, this.listCol)) return out;
     // A row of a table without leading pipes that already has its "|" waits like a "|" row.
-    if (this.inTableWithoutPipes() && line.includes('|')) return out;
+    if (this.inTableWithoutPipes() && text.includes('|')) return out;
     this.closeTable(out);
     out.push({ kind: 'prose', text: line });
     this.line = '';
@@ -176,23 +191,31 @@ export class MarkdownGuard {
     this.raw = '';
     this.listCol = null;
     if (this.fence) {
-      // A closing fence without a final newline is not a code line.
-      if (this.line.trim().length > 0 && !isClosingFence(this.line, this.fence.marker, this.fence.listCol)) this.fence.lines += 1;
-      this.line = '';
-      this.closeFence(out);
-      return out;
+      const q = stripQuote(this.line);
+      if (this.fence.quoted && !q.quoted && this.line.length > 0) {
+        // A quoted fence ends where the quote ends; the line itself is ordinary text.
+        this.closeFence(out);
+      } else {
+        const view = this.fence.quoted ? q.text : this.line;
+        // A closing fence without a final newline is not a code line.
+        if (view.trim().length > 0 && !isClosingFence(view, this.fence.marker, this.fence.listCol)) this.fence.lines += 1;
+        this.line = '';
+        this.closeFence(out);
+        return out;
+      }
     }
     const line = this.passthrough ? '' : this.line;
+    const text = stripQuote(line).text;
     if (line.length > 0) {
-      if (this.candidate !== null && this.isSeparator(line, this.candidate)) {
+      if (this.candidate !== null && this.isSeparator(text, this.candidate)) {
         // "a | b" + "--- | ---" at the very end: a table without rows.
-        this.table = [this.candidate, line];
+        this.table = [this.candidate, text];
         this.candidate = null;
       } else {
         // The possible header goes first, so the order stays the same as in the stream.
         this.releaseCandidate(out);
-        if (this.isTableLine(line)) {
-          this.table.push(line);
+        if (this.isTableLine(text)) {
+          this.table.push(text);
         } else {
           this.closeTable(out);
           out.push({ kind: 'prose', text: line });
@@ -218,13 +241,15 @@ export class MarkdownGuard {
     }
     this.line += segment;
     const line = this.line;
+    // Quote markers do not count: the rules below look at the content of the line.
+    const text = stripQuote(line).text;
     // A possible header is released as soon as this line can no longer be its separator row.
-    if (this.candidate !== null && !SEPARATOR_START.test(line)) this.releaseCandidate(out);
+    if (this.candidate !== null && !SEPARATOR_START.test(text)) this.releaseCandidate(out);
     // Blanks, fences and "|" rows wait for the end of the line, exactly as before.
-    if (waitsForLineEnd(line, this.listCol)) return;
+    if (waitsForLineEnd(text, this.listCol)) return;
     // A table with leading pipes ends at the first line that is clearly not a "|" row.
     if (!this.inTableWithoutPipes()) this.closeTable(out);
-    if (this.mayStillBeTableLine(line)) return;
+    if (this.mayStillBeTableLine(text)) return;
     this.closeTable(out);
     this.releaseCandidate(out);
     out.push({ kind: 'prose', text: line });
@@ -259,35 +284,43 @@ export class MarkdownGuard {
       out.push({ kind: 'prose', text: '\n' });
       return;
     }
+    const q = stripQuote(line);
+    const text = q.text;
     if (this.fence) {
-      if (isClosingFence(line, this.fence.marker, this.fence.listCol)) this.closeFence(out);
-      else this.fence.lines += 1;
-      return;
+      if (this.fence.quoted && !q.quoted) {
+        // The quote ended, so the quoted fence ends too (no lazy continuation); handle the line below.
+        this.closeFence(out);
+      } else {
+        const view = this.fence.quoted ? text : line;
+        if (isClosingFence(view, this.fence.marker, this.fence.listCol)) this.closeFence(out);
+        else this.fence.lines += 1;
+        return;
+      }
     }
-    const open = matchOpenFence(line, this.listCol);
+    const open = matchOpenFence(text, this.listCol);
     if (open) {
       this.closeTable(out);
       this.releaseCandidate(out);
-      this.fence = { ...open, lines: 0 };
+      this.fence = { ...open, lines: 0, quoted: q.quoted };
       return;
     }
     this.trackList(raw);
     if (this.candidate !== null) {
-      if (this.isSeparator(line, this.candidate)) {
-        this.table = [this.candidate, line];
+      if (this.isSeparator(text, this.candidate)) {
+        this.table = [this.candidate, text];
         this.candidate = null;
         return;
       }
       this.releaseCandidate(out);
     }
-    if (this.isTableLine(line)) {
-      this.table.push(line);
+    if (this.isTableLine(text)) {
+      this.table.push(text);
       return;
     }
     this.closeTable(out);
     // A line with "|" but no leading pipe may be a header: decide when the next line shows its separator.
-    if (line.includes('|')) {
-      this.candidate = line;
+    if (text.includes('|')) {
+      this.candidate = text;
       return;
     }
     out.push({ kind: 'prose', text: `${line}\n` });
